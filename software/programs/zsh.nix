@@ -2,12 +2,13 @@
 
 let
 
-  ROOT = /etc/nixos;
-  nix_config = import ("${ROOT}/config.nix") { inherit pkgs; };
+  ROOT = ./../..;
+  cfg = import (ROOT + "/software.nix") { inherit pkgs; };
 
 in
 
 {
+  
   programs.zsh = {
     enableCompletion = true;
     autosuggestions.enable = true;
@@ -18,9 +19,9 @@ in
     };
   };
 
-  home-manager.users.${nix_config.user.name} = { config, ... }: {
+  home-manager.users.${cfg.user.name} = { config, ... }: {
     xdg.configFile."zsh/scripts/ssh-identity-git.sh" = {
-      source = config.lib.file.mkOutOfStoreSymlink "/etc/nixos/.config/zsh/scripts/ssh-identity-git.sh";
+      source = config.lib.file.mkOutOfStoreSymlink "${ROOT}/.config/zsh/scripts/ssh-identity-git.sh";
       force = true;
     };
   };
