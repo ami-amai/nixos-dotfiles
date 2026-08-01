@@ -1,4 +1,4 @@
-{ pkgs, config, lib ... }:
+{ pkgs, config, lib, ... }:
 
 let
 
@@ -51,10 +51,10 @@ in
   networking = {
 
     ## HostName
-    hostName = cfg.hostName;
+    hostName = cfg.system.hostName;
 
     ## Network Manager
-    networkmanager.enable = cfg.networkManager;
+    networkmanager.enable = cfg.system.networkManager;
   };
 
   # Hardware

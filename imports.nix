@@ -2,7 +2,7 @@
 
 let
 
-  cfg = cfg = import ( ../cfg.nix ) { inherit pkgs; };
+  cfg = import ( ../cfg.nix ) { inherit pkgs; };
 
   MODULES = [
 

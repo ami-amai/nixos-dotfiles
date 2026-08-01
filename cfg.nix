@@ -1,11 +1,10 @@
-{ pkgs, throne-nixpkgs... }:
+{ pkgs, throne-nixpkgs, system, ... }:
 
 let
 
   thronePkgs = import throne-nixpkgs {
     inherit system;
   };
-
 
 in
 
@@ -98,7 +97,7 @@ in
     bluetooth = true;
 
     ## Timeone
-    timezone = "Europe/Moscow";
+    timeZone = "Europe/Moscow";
 
     ## TTY Layoyt
     layout = {
