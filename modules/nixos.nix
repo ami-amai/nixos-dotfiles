@@ -1,4 +1,4 @@
-{ ... }:
+{ pkgs, throne-nixpkgs, config, ... }:
 
 let
 

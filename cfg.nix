@@ -76,7 +76,7 @@ in
   # NixOS Configuration
   nixos = {
     ## Version of Release
-    stateVersion = 26.05;
+    stateVersion = "26.05";
 
     ## Allow Unfree
     unfreePkgs = true;
@@ -286,7 +286,7 @@ in
   services = {
 
     ## Pipewire Sound
-    pipwire = {
+    pipewire = {
       enable = true;
 
       ### Pipewire alsa support
