@@ -1,0 +1,622 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEFAULT_INTERVAL=5
+USER_ID="${SUDO_UID:-$(id -u)}"
+STATE_FILE="/tmp/ryzenadj-mode-${USER_ID}.env"
+PID_FILE="/tmp/ryzenadj-mode-${USER_ID}.pid"
+LOG_FILE="/tmp/ryzenadj-mode-${USER_ID}.log"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+
+BASE_STAPM_LIMIT=20000
+BASE_FAST_LIMIT=30000
+BASE_SLOW_LIMIT=25000
+BASE_APU_SLOW_LIMIT=15000
+BASE_TCTL_TEMP=85
+BASE_VRM_CURRENT=33000
+BASE_VRMSOC_CURRENT=13000
+BASE_VRMMAX_CURRENT=50000
+BASE_VRMSOCMAX_CURRENT=17000
+
+declare -A BASE_VALUES=(
+  [stapm-limit]=$BASE_STAPM_LIMIT
+  [fast-limit]=$BASE_FAST_LIMIT
+  [slow-limit]=$BASE_SLOW_LIMIT
+  [apu-slow-limit]=$BASE_APU_SLOW_LIMIT
+  [tctl-temp]=$BASE_TCTL_TEMP
+  [vrm-current]=$BASE_VRM_CURRENT
+  [vrmsoc-current]=$BASE_VRMSOC_CURRENT
+  [vrmmax-current]=$BASE_VRMMAX_CURRENT
+  [vrmsocmax-current]=$BASE_VRMSOCMAX_CURRENT
+)
+
+need_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    exec sudo -E "$SCRIPT_PATH" "$@"
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ryzenadj-mode status
+  ryzenadj-mode stop
+  ryzenadj-mode defaults
+  ryzenadj-mode manual [options] -- <ryzenadj options>
+  ryzenadj-mode manual [options] <ryzenadj options>
+  ryzenadj-mode relative [options] <parameter> <value> [-- <ryzenadj overrides>]
+
+Modes:
+  manual
+    Apply exactly the ryzenadj options you pass, then keep enforcing them.
+
+    Examples:
+      ryzenadj-mode manual --interval 5 -- --stapm-limit=6000 --fast-limit=9000 --slow-limit=7500 --apu-slow-limit=4500 --tctl-temp=65
+      ryzenadj-mode manual --boost off --max-freq 1400000 --cores 4 -- --stapm-limit=8000 --fast-limit=12000
+
+  relative
+    Pick one supported ryzenadj info parameter and target value. The script
+    computes a ratio against default values and scales all known defaults.
+
+    Examples:
+      ryzenadj-mode relative stapm-limit 6
+      ryzenadj-mode relative stapm-limit 6000 --interval 10
+      ryzenadj-mode relative fast-limit 9 --boost off --cores 4
+      ryzenadj-mode relative stapm-limit 6 -- --tctl-temp=65 --apu-slow-limit=3000
+
+Common options:
+  --interval SECONDS       Enforcement period. Default: 5.
+  --boost on|off           Force CPU boost state.
+  --min-freq KHZ           Set CPU scaling_min_freq on all policies.
+  --max-freq KHZ           Set CPU scaling_max_freq on all policies.
+  --freq KHZ               Set min and max CPU frequency.
+  --cores N                Keep only N logical CPUs online when possible.
+  --once                   Apply once and do not start background enforcer.
+  -h, --help               Show this help.
+
+Supported relative parameters:
+  stapm-limit fast-limit slow-limit apu-slow-limit tctl-temp
+  vrm-current vrmsoc-current vrmmax-current vrmsocmax-current
+
+Notes:
+  Values for power/current parameters may be given as watts/amps-like table
+  values (6, 7.5, 9) or as ryzenadj units (6000, 7500, 9000). Temperature
+  parameters are degrees C.
+EOF
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+ryzen_info() {
+  ryzenadj -i 2>/dev/null || true
+}
+
+table_value() {
+  local key="$1"
+  awk -F'|' -v key="$key" '
+    $2 ~ key {
+      gsub(/^[ \t]+|[ \t]+$/, "", $3)
+      print $3
+      exit
+    }
+  '
+}
+
+save_state() {
+  [[ -e "$STATE_FILE" ]] && return
+
+  local info policy cpu
+  info="$(ryzen_info)"
+  {
+    printf 'STAPM_LIMIT=%s\n' "$(printf '%s\n' "$info" | table_value 'STAPM LIMIT')"
+    printf 'FAST_LIMIT=%s\n' "$(printf '%s\n' "$info" | table_value 'PPT LIMIT FAST')"
+    printf 'SLOW_LIMIT=%s\n' "$(printf '%s\n' "$info" | table_value 'PPT LIMIT SLOW')"
+    printf 'APU_SLOW_LIMIT=%s\n' "$(printf '%s\n' "$info" | table_value 'PPT LIMIT APU')"
+    printf 'TCTL_TEMP=%s\n' "$(printf '%s\n' "$info" | table_value 'THM LIMIT CORE')"
+    printf 'VRM_CURRENT=%s\n' "$(printf '%s\n' "$info" | table_value 'TDC LIMIT VDD')"
+    printf 'VRMSOC_CURRENT=%s\n' "$(printf '%s\n' "$info" | table_value 'TDC LIMIT SOC')"
+    printf 'VRMMAX_CURRENT=%s\n' "$(printf '%s\n' "$info" | table_value 'EDC LIMIT VDD')"
+    printf 'VRMSOCMAX_CURRENT=%s\n' "$(printf '%s\n' "$info" | table_value 'EDC LIMIT SOC')"
+    [[ -r /sys/devices/system/cpu/cpufreq/boost ]] && printf 'BOOST=%s\n' "$(< /sys/devices/system/cpu/cpufreq/boost)"
+    for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+      [[ -d "$policy" ]] || continue
+      [[ -r "$policy/scaling_governor" ]] && printf 'GOV_%s=%s\n' "${policy##*policy}" "$(<"$policy/scaling_governor")"
+      [[ -r "$policy/scaling_min_freq" ]] && printf 'MIN_%s=%s\n' "${policy##*policy}" "$(<"$policy/scaling_min_freq")"
+      [[ -r "$policy/scaling_max_freq" ]] && printf 'MAX_%s=%s\n' "${policy##*policy}" "$(<"$policy/scaling_max_freq")"
+    done
+    for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+      [[ -r "$cpu/online" ]] || continue
+      printf 'CPU_%s=%s\n' "${cpu##*cpu}" "$(<"$cpu/online")"
+    done
+  } >"$STATE_FILE"
+  return 0
+}
+
+to_ryzen_unit() {
+  local parameter="$1" value="$2"
+  if [[ ! "$value" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    printf 'Invalid value for %s: %s\n' "$parameter" "$value" >&2
+    exit 2
+  fi
+
+  case "$parameter" in
+    tctl-temp|apu-skin-temp|dgpu-skin-temp|slow-time|stapm-time|*-frequency|max-vcn|min-vcn|max-lclk|min-lclk|max-gfxclk|min-gfxclk|gfx-clk|oc-clk|oc-volt|set-coall|set-coper|set-cogfx|prochot-deassertion-ramp)
+      awk -v v="$value" 'BEGIN { printf "%.0f\n", v }'
+      ;;
+    *)
+      awk -v v="$value" 'BEGIN { if (v < 1000) v *= 1000; printf "%.0f\n", v }'
+      ;;
+  esac
+}
+
+set_boost() {
+  local value="$1"
+  case "$value" in
+    on|1|true) value=1 ;;
+    off|0|false) value=0 ;;
+    *) printf 'Invalid --boost value: %s\n' "$value" >&2; exit 2 ;;
+  esac
+  [[ -w /sys/devices/system/cpu/cpufreq/boost ]] && printf '%s\n' "$value" >/sys/devices/system/cpu/cpufreq/boost
+}
+
+set_governor() {
+  local gov="$1" policy
+  for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+    policy_is_online "$policy" || continue
+    [[ -w "$policy/scaling_governor" ]] && printf '%s\n' "$gov" >"$policy/scaling_governor" || true
+  done
+}
+
+policy_is_online() {
+  local policy="$1" cpu
+  [[ -r "$policy/affected_cpus" ]] || return 1
+  cpu="$(cat "$policy/affected_cpus" 2>/dev/null || true)"
+  [[ -n "$cpu" ]]
+}
+
+set_freqs() {
+  local min_freq="$1" max_freq="$2" policy
+  for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+    [[ -d "$policy" ]] || continue
+    policy_is_online "$policy" || continue
+    if [[ -n "$max_freq" && -w "$policy/scaling_max_freq" ]]; then
+      printf '%s\n' "$max_freq" >"$policy/scaling_max_freq" || true
+    fi
+    if [[ -n "$min_freq" && -w "$policy/scaling_min_freq" ]]; then
+      printf '%s\n' "$min_freq" >"$policy/scaling_min_freq" || true
+    fi
+  done
+}
+
+set_cores() {
+  local keep="$1" cpu idx
+  [[ "$keep" =~ ^[0-9]+$ && "$keep" -ge 1 ]] || { printf 'Invalid --cores value: %s\n' "$keep" >&2; exit 2; }
+  for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+    idx="${cpu##*cpu}"
+    [[ "$idx" == "0" || -w "$cpu/online" ]] || continue
+    if (( idx < keep )); then
+      [[ -w "$cpu/online" ]] && printf '1\n' >"$cpu/online" || true
+    else
+      [[ -w "$cpu/online" ]] && printf '0\n' >"$cpu/online" || true
+    fi
+  done
+}
+
+apply_common() {
+  local boost="$1" min_freq="$2" max_freq="$3" cores="$4"
+  [[ -n "$cores" ]] && set_cores "$cores"
+  [[ -n "$boost" ]] && set_boost "$boost"
+  [[ -n "$min_freq" || -n "$max_freq" ]] && set_freqs "$min_freq" "$max_freq"
+  return 0
+}
+
+apply_ryzenadj_args() {
+  local -a args=("$@")
+  local arg failed=0 applied=0
+  ((${#args[@]} > 0)) || return 0
+  if ryzenadj "${args[@]}" >/dev/null 2>>"$LOG_FILE"; then
+    return 0
+  fi
+
+  printf '%s batch apply failed; retrying parameters one by one: %s\n' "$(date --iso-8601=seconds)" "${args[*]}" >>"$LOG_FILE"
+  for arg in "${args[@]}"; do
+    if ryzenadj "$arg" >/dev/null 2>>"$LOG_FILE"; then
+      applied=1
+    else
+      failed=1
+      printf '%s parameter apply failed: %s\n' "$(date --iso-8601=seconds)" "$arg" >>"$LOG_FILE"
+    fi
+  done
+
+  (( applied == 1 && failed == 0 )) && return 0
+  (( applied == 1 )) && return 0
+  return 1
+}
+
+apply_defaults() {
+  ryzenadj \
+    --stapm-limit="$BASE_STAPM_LIMIT" \
+    --fast-limit="$BASE_FAST_LIMIT" \
+    --slow-limit="$BASE_SLOW_LIMIT" \
+    --apu-slow-limit="$BASE_APU_SLOW_LIMIT" \
+    --vrm-current="$BASE_VRM_CURRENT" \
+    --vrmsoc-current="$BASE_VRMSOC_CURRENT" \
+    --vrmmax-current="$BASE_VRMMAX_CURRENT" \
+    --vrmsocmax-current="$BASE_VRMSOCMAX_CURRENT" \
+    --tctl-temp="$BASE_TCTL_TEMP" >/dev/null
+}
+
+parse_common_options() {
+  INTERVAL="$DEFAULT_INTERVAL"
+  BOOST_MODE=""
+  MIN_FREQ=""
+  MAX_FREQ=""
+  CORES=""
+  ONCE=0
+  POSITIONAL=()
+  PASSTHROUGH=()
+
+  while (($#)); do
+    case "$1" in
+      --interval)
+        INTERVAL="${2:?Missing value for --interval}"
+        shift 2
+        ;;
+      --interval=*)
+        INTERVAL="${1#*=}"
+        shift
+        ;;
+      --boost)
+        BOOST_MODE="${2:?Missing value for --boost}"
+        shift 2
+        ;;
+      --boost=*)
+        BOOST_MODE="${1#*=}"
+        shift
+        ;;
+      --min-freq)
+        MIN_FREQ="${2:?Missing value for --min-freq}"
+        shift 2
+        ;;
+      --min-freq=*)
+        MIN_FREQ="${1#*=}"
+        shift
+        ;;
+      --max-freq)
+        MAX_FREQ="${2:?Missing value for --max-freq}"
+        shift 2
+        ;;
+      --max-freq=*)
+        MAX_FREQ="${1#*=}"
+        shift
+        ;;
+      --freq)
+        MIN_FREQ="${2:?Missing value for --freq}"
+        MAX_FREQ="$MIN_FREQ"
+        shift 2
+        ;;
+      --freq=*)
+        MIN_FREQ="${1#*=}"
+        MAX_FREQ="$MIN_FREQ"
+        shift
+        ;;
+      --cores)
+        CORES="${2:?Missing value for --cores}"
+        shift 2
+        ;;
+      --cores=*)
+        CORES="${1#*=}"
+        shift
+        ;;
+      --once)
+        ONCE=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --)
+        shift
+        PASSTHROUGH+=("$@")
+        break
+        ;;
+      *)
+        POSITIONAL+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  [[ "$INTERVAL" =~ ^[0-9]+$ && "$INTERVAL" -ge 1 ]] || { printf 'Invalid --interval: %s\n' "$INTERVAL" >&2; exit 2; }
+}
+
+manual_args_from_positionals() {
+  local -a out=()
+  local item key value
+  while ((${#POSITIONAL[@]})); do
+    item="${POSITIONAL[0]}"
+    POSITIONAL=("${POSITIONAL[@]:1}")
+    case "$item" in
+      --*=*)
+        key="${item%%=*}"
+        value="${item#*=}"
+        out+=("$key=$value")
+        ;;
+      --*)
+        case "$item" in
+          --enable-oc|--disable-oc|--power-saving|--max-performance)
+            out+=("$item")
+            continue
+            ;;
+        esac
+        value="${POSITIONAL[0]:-}"
+        [[ -n "$value" ]] || { printf 'Missing value for %s\n' "$item" >&2; exit 2; }
+        POSITIONAL=("${POSITIONAL[@]:1}")
+        out+=("$item=$value")
+        ;;
+      *)
+        printf 'Unexpected manual argument: %s\n' "$item" >&2
+        exit 2
+        ;;
+    esac
+  done
+  printf '%s\n' "${out[@]}"
+}
+
+arg_key() {
+  local arg="$1"
+  arg="${arg%%=*}"
+  printf '%s\n' "$arg"
+}
+
+merge_ryzen_args() {
+  local -a base=()
+  local -a overrides=()
+  local arg override key skip
+
+  while (($#)); do
+    [[ "$1" == "--" ]] && { shift; break; }
+    base+=("$1")
+    shift
+  done
+  overrides=("$@")
+
+  for arg in "${base[@]}"; do
+    key="$(arg_key "$arg")"
+    skip=0
+    for override in "${overrides[@]}"; do
+      if [[ "$(arg_key "$override")" == "$key" ]]; then
+        skip=1
+        break
+      fi
+    done
+    (( skip == 0 )) && printf '%s\n' "$arg"
+  done
+  printf '%s\n' "${overrides[@]}"
+}
+
+relative_args() {
+  local parameter="$1" target="$2"
+  local base target_unit ratio
+  local stapm fast slow apu tctl vrm vrmsoc vrmmax vrmsocmax
+  [[ -n "${BASE_VALUES[$parameter]:-}" ]] || {
+    printf 'Unsupported relative parameter: %s\n' "$parameter" >&2
+    printf 'Supported: %s\n' "${!BASE_VALUES[*]}" >&2
+    exit 2
+  }
+  [[ "$parameter" != cclk* ]] || { printf 'cclk_* parameters are not supported in relative mode\n' >&2; exit 2; }
+
+  base="${BASE_VALUES[$parameter]}"
+  target_unit="$(to_ryzen_unit "$parameter" "$target")"
+  ratio="$(awk -v t="$target_unit" -v b="$base" 'BEGIN { printf "%.10f\n", t / b }')"
+
+  stapm="$(awk -v r="$ratio" -v b="$BASE_STAPM_LIMIT" 'BEGIN { printf "%.0f", b * r }')"
+  fast="$(awk -v r="$ratio" -v b="$BASE_FAST_LIMIT" 'BEGIN { printf "%.0f", b * r }')"
+  slow="$(awk -v r="$ratio" -v b="$BASE_SLOW_LIMIT" 'BEGIN { printf "%.0f", b * r }')"
+  apu="$(awk -v r="$ratio" -v b="$BASE_APU_SLOW_LIMIT" 'BEGIN { printf "%.0f", b * r }')"
+  vrm="$(awk -v r="$ratio" -v b="$BASE_VRM_CURRENT" 'BEGIN { printf "%.0f", b * r }')"
+  vrmsoc="$(awk -v r="$ratio" -v b="$BASE_VRMSOC_CURRENT" 'BEGIN { printf "%.0f", b * r }')"
+  vrmmax="$(awk -v r="$ratio" -v b="$BASE_VRMMAX_CURRENT" 'BEGIN { printf "%.0f", b * r }')"
+  vrmsocmax="$(awk -v r="$ratio" -v b="$BASE_VRMSOCMAX_CURRENT" 'BEGIN { printf "%.0f", b * r }')"
+  tctl="$(awk -v r="$ratio" -v b="$BASE_TCTL_TEMP" 'BEGIN { v = b * r; if (v < 45) v = 45; if (v > 85) v = 85; printf "%.0f", v }')"
+
+  case "$parameter" in
+    stapm-limit) stapm="$target_unit" ;;
+    fast-limit) fast="$target_unit" ;;
+    slow-limit) slow="$target_unit" ;;
+    apu-slow-limit) apu="$target_unit" ;;
+    tctl-temp) tctl="$target_unit" ;;
+    vrm-current) vrm="$target_unit" ;;
+    vrmsoc-current) vrmsoc="$target_unit" ;;
+    vrmmax-current) vrmmax="$target_unit" ;;
+    vrmsocmax-current) vrmsocmax="$target_unit" ;;
+  esac
+
+  printf '%s\n' \
+    "--stapm-limit=$stapm" \
+    "--fast-limit=$fast" \
+    "--slow-limit=$slow" \
+    "--apu-slow-limit=$apu" \
+    "--vrm-current=$vrm" \
+    "--vrmsoc-current=$vrmsoc" \
+    "--vrmmax-current=$vrmmax" \
+    "--vrmsocmax-current=$vrmsocmax" \
+    "--tctl-temp=$tctl"
+}
+
+start_enforcer() {
+  local interval="$1"
+  shift
+  nohup "$SCRIPT_PATH" _enforce "$interval" "$@" >>"$LOG_FILE" 2>&1 &
+  printf '%s\n' "$!" >"$PID_FILE"
+}
+
+stop_enforcer() {
+  local pid
+  if [[ -r "$PID_FILE" ]]; then
+    pid="$(<"$PID_FILE")"
+    [[ -n "$pid" ]] && kill "$pid" >/dev/null 2>&1 || true
+    rm -f "$PID_FILE"
+  fi
+
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    [[ "$pid" == "$$" ]] && continue
+    kill "$pid" >/dev/null 2>&1 || true
+  done < <(pgrep -f 'ryzenadj-mode\.sh _enforce' 2>/dev/null || true)
+  return 0
+}
+
+restore_state() {
+  [[ -r "$STATE_FILE" ]] || return 0
+  # shellcheck disable=SC1090
+  source "$STATE_FILE"
+
+  local -a restore_args
+  local policy index var cpu
+  if [[ -n "${STAPM_LIMIT:-}" && -n "${FAST_LIMIT:-}" && -n "${SLOW_LIMIT:-}" && -n "${APU_SLOW_LIMIT:-}" && -n "${TCTL_TEMP:-}" ]]; then
+    restore_args=(
+      "--stapm-limit=$(to_ryzen_unit stapm-limit "$STAPM_LIMIT")"
+      "--fast-limit=$(to_ryzen_unit fast-limit "$FAST_LIMIT")"
+      "--slow-limit=$(to_ryzen_unit slow-limit "$SLOW_LIMIT")"
+      "--apu-slow-limit=$(to_ryzen_unit apu-slow-limit "$APU_SLOW_LIMIT")"
+      "--tctl-temp=$(to_ryzen_unit tctl-temp "$TCTL_TEMP")"
+    )
+    [[ -n "${VRM_CURRENT:-}" ]] && restore_args+=("--vrm-current=$(to_ryzen_unit vrm-current "$VRM_CURRENT")")
+    [[ -n "${VRMSOC_CURRENT:-}" ]] && restore_args+=("--vrmsoc-current=$(to_ryzen_unit vrmsoc-current "$VRMSOC_CURRENT")")
+    [[ -n "${VRMMAX_CURRENT:-}" ]] && restore_args+=("--vrmmax-current=$(to_ryzen_unit vrmmax-current "$VRMMAX_CURRENT")")
+    [[ -n "${VRMSOCMAX_CURRENT:-}" ]] && restore_args+=("--vrmsocmax-current=$(to_ryzen_unit vrmsocmax-current "$VRMSOCMAX_CURRENT")")
+    ryzenadj "${restore_args[@]}" >/dev/null || true
+  fi
+  [[ -n "${BOOST:-}" ]] && set_boost "$BOOST" || true
+
+  for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+    [[ -w "$cpu/online" ]] || continue
+    index="${cpu##*cpu}"
+    var="CPU_${index}"
+    [[ -n "${!var:-}" ]] && printf '%s\n' "${!var}" >"$cpu/online" || true
+  done
+  for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+    [[ -d "$policy" ]] || continue
+    index="${policy##*policy}"
+    var="MAX_${index}"
+    [[ -n "${!var:-}" && -w "$policy/scaling_max_freq" ]] && printf '%s\n' "${!var}" >"$policy/scaling_max_freq"
+    var="MIN_${index}"
+    [[ -n "${!var:-}" && -w "$policy/scaling_min_freq" ]] && printf '%s\n' "${!var}" >"$policy/scaling_min_freq"
+    var="GOV_${index}"
+    [[ -n "${!var:-}" && -w "$policy/scaling_governor" ]] && printf '%s\n' "${!var}" >"$policy/scaling_governor"
+  done
+
+  rm -f "$STATE_FILE"
+}
+
+status() {
+  if [[ -r "$PID_FILE" ]] && kill -0 "$(<"$PID_FILE")" >/dev/null 2>&1 && ps -p "$(<"$PID_FILE")" -o args= 2>/dev/null | grep -q 'ryzenadj-mode.sh _enforce'; then
+    printf 'Enforcer PID: %s\n' "$(<"$PID_FILE")"
+  else
+    printf 'Enforcer PID: none\n'
+  fi
+  printf 'Enforcer log: %s\n\n' "$LOG_FILE"
+  ryzenadj -i
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  _enforce)
+    need_root _enforce "$@"
+    INTERVAL="${1:?Missing enforcement interval}"
+    shift
+    export RYZENADJ_MODE_ENFORCER=1
+    printf '%s started interval=%s command=%q\n' "$(date --iso-8601=seconds)" "$INTERVAL" "$*" >>"$LOG_FILE"
+    while :; do
+      if "$@"; then
+        :
+      else
+        code="$?"
+        printf '%s command failed code=%s command=%q\n' "$(date --iso-8601=seconds)" "$code" "$*" >>"$LOG_FILE"
+        logger -t ryzenadj-mode "enforcer command failed code=${code}"
+      fi
+      sleep "$INTERVAL"
+    done
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  status)
+    need_root status "$@"
+    status
+    ;;
+  stop)
+    need_root stop "$@"
+    stop_enforcer
+    restore_state
+    status
+    ;;
+  defaults|default|reset-defaults)
+    need_root "$cmd" "$@"
+    stop_enforcer
+    apply_defaults
+    rm -f "$STATE_FILE" "$PID_FILE" 2>/dev/null || true
+    status
+    ;;
+  manual)
+    need_root manual "$@"
+    parse_common_options "$@"
+    POSITIONAL+=("${PASSTHROUGH[@]}")
+    mapfile -t RYZEN_ARGS < <(manual_args_from_positionals)
+    ((${#RYZEN_ARGS[@]} > 0)) || { printf 'manual mode requires ryzenadj options\n' >&2; exit 2; }
+    [[ "${RYZENADJ_MODE_ENFORCER:-0}" == "1" ]] || stop_enforcer
+    save_state
+    apply_common "$BOOST_MODE" "$MIN_FREQ" "$MAX_FREQ" "$CORES"
+    apply_ryzenadj_args "${RYZEN_ARGS[@]}"
+    [[ "${RYZENADJ_MODE_ENFORCER:-0}" == "1" ]] && exit 0
+    if (( ONCE == 0 )); then
+      ENFORCER_ARGS=("$SCRIPT_PATH" manual --once)
+      [[ -n "$BOOST_MODE" ]] && ENFORCER_ARGS+=(--boost "$BOOST_MODE")
+      [[ -n "$MIN_FREQ" ]] && ENFORCER_ARGS+=(--min-freq "$MIN_FREQ")
+      [[ -n "$MAX_FREQ" ]] && ENFORCER_ARGS+=(--max-freq "$MAX_FREQ")
+      [[ -n "$CORES" ]] && ENFORCER_ARGS+=(--cores "$CORES")
+      ENFORCER_ARGS+=(-- "${RYZEN_ARGS[@]}")
+      start_enforcer "$INTERVAL" "${ENFORCER_ARGS[@]}"
+    fi
+    status
+    ;;
+  relative)
+    need_root relative "$@"
+    parse_common_options "$@"
+    ((${#POSITIONAL[@]} == 2)) || { printf 'relative mode requires: <parameter> <value>\n' >&2; exit 2; }
+    RELATIVE_PARAMETER="${POSITIONAL[0]}"
+    RELATIVE_VALUE="${POSITIONAL[1]}"
+    mapfile -t RYZEN_ARGS < <(relative_args "$RELATIVE_PARAMETER" "$RELATIVE_VALUE")
+    if ((${#PASSTHROUGH[@]} > 0)); then
+      POSITIONAL=("${PASSTHROUGH[@]}")
+      mapfile -t OVERRIDE_ARGS < <(manual_args_from_positionals)
+      mapfile -t RYZEN_ARGS < <(merge_ryzen_args "${RYZEN_ARGS[@]}" -- "${OVERRIDE_ARGS[@]}")
+    fi
+    [[ "${RYZENADJ_MODE_ENFORCER:-0}" == "1" ]] || stop_enforcer
+    save_state
+    apply_common "$BOOST_MODE" "$MIN_FREQ" "$MAX_FREQ" "$CORES"
+    apply_ryzenadj_args "${RYZEN_ARGS[@]}"
+    [[ "${RYZENADJ_MODE_ENFORCER:-0}" == "1" ]] && exit 0
+    if (( ONCE == 0 )); then
+      ENFORCER_ARGS=("$SCRIPT_PATH" relative --once)
+      [[ -n "$BOOST_MODE" ]] && ENFORCER_ARGS+=(--boost "$BOOST_MODE")
+      [[ -n "$MIN_FREQ" ]] && ENFORCER_ARGS+=(--min-freq "$MIN_FREQ")
+      [[ -n "$MAX_FREQ" ]] && ENFORCER_ARGS+=(--max-freq "$MAX_FREQ")
+      [[ -n "$CORES" ]] && ENFORCER_ARGS+=(--cores "$CORES")
+      ENFORCER_ARGS+=("$RELATIVE_PARAMETER" "$RELATIVE_VALUE")
+      ((${#PASSTHROUGH[@]} > 0)) && ENFORCER_ARGS+=(-- "${PASSTHROUGH[@]}")
+      start_enforcer "$INTERVAL" "${ENFORCER_ARGS[@]}"
+    fi
+    status
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

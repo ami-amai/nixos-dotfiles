@@ -16,7 +16,9 @@
         kernelModules = [ "kvm-amd" ];
         
         # Kernel Parametrs
-        kernelParams = [];
+        kernelParams = [ 
+            # "amd_pstate=active" 
+        ];
 
         # Init Modules
         initrd = {
@@ -37,21 +39,21 @@
     # Partitons
     fileSystems = {
         "/" = {
-            device = "/dev/1";
+            device = "/dev/";
             fsType = "btrfs";
         };
         "/home" = {
-            device = "/dev/1";
+            device = "/dev/";
             fsType = "btrfs";
             options = [ "subvol=home" ];
         };
         "/nix" = {
-            device = "/dev/1";
+            device = "/dev/";
             fsType = "btrfs";
             options = [ "subvol=nix" ];
         };
         "/boot" = {
-            device = "/dev/2";
+            device = "/dev/boot";
             fsType = "vfat";
             options = [ "fmask=0077" "dmask=0077" ];
         };

@@ -41,6 +41,9 @@ in
     ++ cfg.user.packages;
   };
 
+  # Polkit Agent
+  security.polkit.enable = cfg.user.polkitAgent;
+
   # HOME MANAGER
   home-manager.users.${cfg.user.name} = {
     home.stateVersion = cfg.nixos.version;
@@ -73,6 +76,7 @@ in
   };
 
 
+  # Services
   services = lib.mkMerge (
     [
       {

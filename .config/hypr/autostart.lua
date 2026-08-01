@@ -19,6 +19,5 @@ hl.exec_cmd("amixer set Master 50%")
 hl.exec_cmd("sudo alsactl store")
 
 
-hl.on("hyprland.start", function()
-  hl.exec_cmd("/run/current-system/sw/libexec/hyprpolkitagent")
-end)
+
+hl.exec_cmd("systemctl --user start hyprpolkitagent.service")
