@@ -13,11 +13,15 @@
 --   hl.exec_cmd("waybar & hyprpaper & firefox")
 -- end)
 
-hl.exec_cmd("awww-daemon")
-hl.exec_cmd("amixer set Master unmute")
-hl.exec_cmd("amixer set Master 50%")
-hl.exec_cmd("sudo alsactl store")
+hl.on("hyprland.start", function()
+    hl.exec_cmd("systemctl --user start hyprpolkitagent.service")
+    hl.exec_cmd("awww-daemon")
+    hl.exec_cmd("amixer set Master unmute")
+    hl.exec_cmd("amixer set Master 50%")
+    hl.exec_cmd("sudo alsactl store")
+end)
 
 
 
-hl.exec_cmd("systemctl --user start hyprpolkitagent.service")
+
+
