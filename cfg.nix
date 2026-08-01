@@ -1,8 +1,10 @@
-{ pkgs, throne-nixpkgs, system, config, ... }:
+{ pkgs, config, throne-nixpkgs, ... }:
 
 let
 
-  thronePkgs = import throne-nixpkgs;
+  thronePkgs = import throne-nixpkgs {
+    system = pkgs.stdenv.hostPlatform.system;
+  };
 
 in
 

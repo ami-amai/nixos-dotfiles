@@ -1,8 +1,8 @@
-{ home-manager, ... }:
+{ pkgs, throne-nixpkgs, config, home-manager, ... }:
 
 let
 
-  cfg = import ( ../cfg.nix );
+  cfg = import ( ../cfg.nix ) { inherit pkgs config throne-nixpkgs; };
 
 in
 

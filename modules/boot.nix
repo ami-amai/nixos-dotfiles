@@ -1,8 +1,8 @@
-{ ... }:
+{ pkgs, throne-nixpkgs, config, ... }:
 
 let
 
-  cfg = import ( ../cfg.nix );
+  cfg = import ( ../cfg.nix ) { inherit pkgs throne-nixpkgs config; };
 
 in
 
