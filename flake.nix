@@ -1,7 +1,6 @@
 {
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {
@@ -20,17 +19,10 @@
       nixpkgs-unstable,
       home-manager,
       throne-nixpkgs,
-      pkgs,
       ...
     }:
-
-    let
-
-      cfg = import ( ../cfg.nix ) { inherit pkgs; };
-
-    in
     {
-      nixosConfigurations."${cfg.nixos.stateVersion}" = nixpkgs.lib.nixosSystem {
+      nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
 
         modules = [

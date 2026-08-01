@@ -2,7 +2,7 @@
 
 let
 
-  cfg = import ( ../cfg.nix ) { inherit pkgs; };
+  cfg = import ( ../cfg.nix );
 
   MODULES = [
 
@@ -27,6 +27,6 @@ in
 {
   imports = map (module: ./modules/${module}.nix) MODULES;
 
-  home-manager.users.${cfg.user.name} = import ./modules/home.nix
+  home-manager.users.${cfg.user.name} = import ./modules/home.nix;
 
 }

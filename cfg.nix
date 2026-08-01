@@ -1,10 +1,8 @@
-{ pkgs, throne-nixpkgs, system, ... }:
+{ pkgs, throne-nixpkgs, system, config, ... }:
 
 let
 
-  thronePkgs = import throne-nixpkgs {
-    inherit system;
-  };
+  thronePkgs = import throne-nixpkgs;
 
 in
 
@@ -128,7 +126,7 @@ in
       python3 nodejs
       mtpfs ntfs3g
       ryzenadj
-    ] ## Utils
+    ]; ## Utils
   };
 
   # User Configuration
