@@ -196,12 +196,10 @@ in
     files = {
 
       ### Hyprland Config
-      ".config/hypr".source = 
-        config.lib.file.mkOutOfStoreSymlink "./.config/hypr";
+      ".config/hypr".source = ./.config/hypr;
 
       ### Zsh
-      ".local/share/zsh/".source = 
-        config.lib.file.mkOutOfStoreSymlink "./.local/share/zsh";
+      ".local/share/zsh/".source = ./.local/share/zsh;
 
     };
   };

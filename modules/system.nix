@@ -55,6 +55,14 @@ in
 
     ## Network Manager
     networkmanager.enable = cfg.system.networkManager;
+
+    firewall = {
+      checkReversePath = "loose";
+
+#      trustedInterfaes = [
+#        "throne-tun"
+#      ];
+    };
   };
 
   # Hardware
