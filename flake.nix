@@ -49,8 +49,8 @@
       # Modules
       modules = [
         ## Home Manager
-        home-manager.nixosModules.home-manager
-	./modules/home.nix	
+        ./modules/home.nix
+	home-manager.nixosModules.home-manager	
 
         ## Programs and services
         ./programs.nix
