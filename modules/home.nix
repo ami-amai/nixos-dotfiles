@@ -8,7 +8,7 @@
     users.${cfg.USER.name} = {
     	home.stateVersion = cfg.NIXOS.stateVersion;
         home.file = cfg.HOME.symlinks;
-        home.package = cfg.HOME.packages;
+        home.packages = cfg.HOME.packages;
     };
     useGlobalPkgs = true;
     useUserPackages = true;
