@@ -117,7 +117,7 @@
   };
 
   HOME = {
-    imports = {
+    symlinks = {
         ".config/hypr".source = "../.config/hypr";
         ".config/zsh".source = "../.config/zsh";
     };
