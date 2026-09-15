@@ -118,8 +118,8 @@
 
   HOME = {
     symlinks = {
-        ".config/hypr".source = "../.config/hypr";
-        ".config/zsh".source = "../.config/zsh";
+        ".config/hypr".source = ./.config/hypr;
+        ".config/zsh".source = ./.config/zsh;
     };
     packages = with pkgsU; [
         # Hyprland
