@@ -13,10 +13,22 @@ local apps = {
     printscreen = "hyprshot --clipboard-only --mode region"
 }
 
-hl.bind(mainMod .. " + RETURN", hl.dsp.exec_cmd(apps.terminal))
-hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(apps.fileManager))
-hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(apps.menu))
-hl.bind("Print", hl.dsp.exec_cmd(apps.printscreen))
+local APPS = {
+    ["kitty"] = mainMod .. "+ RETURN",
+    ["thunar"] = mainMod .. "+ E",
+    ["rofi -show drun"] = mainMod .. "+ R",
+    ["hyprshot --clipboard-only --mode region"] = "Print"
+}
+
+for app, bind in pairs(APPS) do
+    hl.bind(bind, exec_cmd(app))
+
+
+    
+-- hl.bind(mainMod .. " + RETURN", hl.dsp.exec_cmd(apps.terminal))
+-- hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(apps.fileManager))
+-- hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(apps.menu))
+-- hl.bind("Print", hl.dsp.exec_cmd(apps.printscreen))
 
 -- Binds for Windows
 

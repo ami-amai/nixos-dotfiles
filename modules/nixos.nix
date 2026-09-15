@@ -1,22 +1,10 @@
-{ pkgs, throne-nixpkgs, config, ... }:
-
-let
-
-  cfg = import ( ../cfg.nix ) { inherit pkgs config throne-nixpkgs; };
-
-in
+{ cfg, ... }:
 
 {
+
+  # NIXOS
+  system.stateVersion = cfg.NIXOS.stateVersion;
+  nixpkgs.config.allowUnfree = cfg.NIXOS.allowUnfree;
+  nix.settings.experimentalFeatures = cfg.NIXOS.experimentalFeatures;
   
-  system = {
-    stateVersion = cfg.nixos.stateVersion;
-  };
-
-  nix.settings = {
-    experimental-features = cfg.nixos.experimentalFeatures;
-  };
-  nixpkgs.config = {
-    allowUnfree = cfg.nixos.unfreePkgs;
-  };
-
 }

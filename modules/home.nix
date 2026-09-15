@@ -1,16 +1,20 @@
-{ pkgs, throne-nixpkgs, config, home-manager, ... }:
+{ cfg, ... }:
 
-let
-
-  cfg = import ( ../cfg.nix ) { inherit pkgs config throne-nixpkgs; };
-
-in
 
 {
-  
+
+  # HOME
+  home-manager = {
+    users.${cfg.USER.name} = import ./home.nix;
+    useGlobalPkgs = true;
+    useUserPackages = true;
+  };
+
+  # HOME
   home = {
-    stateVersion = "${cfg.nixos.stateVersion}";
-    file = cfg.home.files;
+    stateVersion = "${cfg.NIXOS.stateVersion}";
+    file = cfg.HOME.imports;
+    packages = cfg.HOME.packages; 
   };
 
 }

@@ -1,20 +1,13 @@
-{ pkgs, throne-nixpkgs, config, ... }:
-
-let
-
-  cfg = import ( ../cfg.nix ) { inherit pkgs config throne-nixpkgs; };
-
-in
+{ cfg, ... }:
 
 {
 
-  users.users.${cfg.user.name} = {
+  # USER
+  users.users.${cfg.USER.name} = {
     isNormalUser = true;
-    shell = cfg.user.shell;
-    description = "normal user";
-    extraGroups = cfg.user.extraGroups;
-    packages = with pkgs; []
-    ++ cfg.user.packages;
+    shell = cfg.USER.shell;
+    extraGroups = cfg.USER.extraGroups;
+    description = "Normal user ${cfg.USER.name}";
   };
-
+  
 }

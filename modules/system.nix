@@ -1,85 +1,61 @@
-{ pkgs, throne-nixpkgs, config, lib, ... }:
-
-let
-
-  cfg = import ( ../cfg.nix ) { inherit pkgs config throne-nixpkgs; };
-
-in
+{ cfg, ... }:
 
 {
-  # Timezone
-  time.timeZone = cfg.system.timeZone;
 
-  # Locale
-    i18n = {
-    defaultLocale = "${cfg.system.locale.default}.UTF-8";
+
+
+  # FILESYSTEM
+  fileSystems = cfg.FILESYSTEM;
+
+  # HARDWARE
+  hardware = cfg.HARDWARE;
+
+  # BOOT
+  boot = {
+    # KERNEL
+    kernelPackages = cfg.KERNEL.packages;
+    kernelModules = cfg.KERNEL.modules;
+    kernelParams = cfg.KERNEL.params;
+    extraModulePackages = cfg.KERNEL.extraModules;
+
+    # BOOT
+    initrd = cfg.BOOT.initrd;
+    loader = cfg.BOOT.loader;
+  };
+
+  # ZRAMSWAP
+  zramSwap = cfg.ZRAMSWAP;
+
+  # ENVIRONMENT
+  time.timeZone = cfg.ENVIRONMENT.timeZone;
+  i18n = {
+    defaultLocale = "${cfg.ENVIRONMENT.locale.default}.UTF-8";
     extraLocaleSettings = {
-      LC_ADDRESS = "${cfg.system.locale.extra}.UTF-8";
-      LC_IDENTIFICATION = "${cfg.system.locale.extra}.UTF-8";
-      LC_MEASUREMENT = "${cfg.system.locale.extra}.UTF-8";
-      LC_MONETARY = "${cfg.system.locale.extra}.UTF-8";
-      LC_NAME = "${cfg.system.locale.extra}.UTF-8";
-      LC_NUMERIC = "${cfg.system.locale.extra}.UTF-8";
-      LC_PAPER = "${cfg.system.locale.extra}.UTF-8";
-      LC_TELEPHONE = "${cfg.system.locale.extra}.UTF-8";
-      LC_TIME = "${cfg.system.locale.extra}.UTF-8";
+      LC_ADDRESS = "${cfg.ENVIRONMENT.locale.extra}.UTF-8";
+      LC_IDENTIFICATION = "${cfg.ENVIRONMENT.locale.extra}.UTF-8";
+      LC_MEASUREMENT = "${cfg.ENVIRONMENT.locale.extra}.UTF-8";
+      LC_MONETARY = "${cfg.ENVIRONMENT.locale.extra}.UTF-8";
+      LC_NAME = "${cfg.ENVIRONMENT.locale.extra}.UTF-8";
+      LC_NUMERIC = "${cfg.ENVIRONMENT.locale.extra}.UTF-8";
+      LC_PAPER = "${cfg.ENVIRONMENT.locale.extra}.UTF-8";
+      LC_TELEPHONE = "${cfg.ENVIRONMENT.locale.extra}.UTF-8";
+      LC_TIME = "${cfg.ENVIRONMENT.locale.extra}.UTF-8";
     };
   };
 
+  services = {
+    xserver.xkb = {
+      layout = cfg.ENVIRONMENT.layout.default;
+      variant = cfg.ENVIRONMENT.layout.extra;
+    };
+    displayManager.${cfg.ENVIRONMENT.displayManager}.enable = true;
+  };
 
-  # Services
-  services = lib.mkMerge (
-    [
-      {
-        # Layout
-        xserver.xkb = {
-          layout = cfg.system.layout.default;
-          variant = cfg.system.layout.extra;
-        };
-
-        # Display Manager
-        displayManager.${cfg.system.displayManager}.enable = true;
-      }
-    ]
-    #++ map enable cfg.environment.services
-  );
-
-  # Packages
-  environment.systemPackages = cfg.system.environmentPackages;
-
-  # Networking
   networking = {
-
-    ## HostName
-    hostName = cfg.system.hostName;
-
-    ## Network Manager
-    networkmanager.enable = cfg.system.networkManager;
-
-    firewall = {
-      checkReversePath = "loose";
-
-#      trustedInterfaes = [
-#        "throne-tun"
-#      ];
-    };
+    hostName = cfg.HOSTNAME;
+    networkmanager.enable = cfg.ENVIRONMENT.networkManager;
   };
 
-  # Hardware
-  hardware = {
-
-    ## Bluetooth
-    bluetooth = {
-      enable = true;
-    };
-
-    ## AMD
-    cpu.amd = {
-      updateMicrocode = lib.mkDefault config.hardware.enableRedistributableFirmware;
-      ryzen-smu.enable = true;
-    };
-
-    enableRedistributableFirmware = true;
-    
-  };
+  environment.systemPackages = cfg.ENVIRONMENT.packages;
+  
 }
