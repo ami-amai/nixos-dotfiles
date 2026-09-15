@@ -50,6 +50,7 @@
       modules = [
         ## Home Manager
         home-manager.nixosModules.home-manager
+	./modules/home.nix	
 
         ## Programs and services
         ./programs.nix
